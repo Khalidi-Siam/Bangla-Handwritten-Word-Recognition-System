@@ -334,7 +334,7 @@ PREDICT__IMAGE_SIZE=224
 ### Option A — Local Training
 
 **Prerequisites:**
-- Python 3.10+
+- Python 3.11
 - The `BanglaLekha-Isolated/Images/` folder present locally
 - A `.env` file configured (see [Configuration](#configuration-env))
 
