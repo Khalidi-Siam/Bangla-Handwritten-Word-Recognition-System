@@ -1,41 +1,16 @@
 import streamlit as st
-import numpy as np
-import tensorflow as tf
-import json
 from PIL import Image
 from streamlit_drawable_canvas import st_canvas
-
-# =========================================================
-# CONFIG
-# =========================================================
-MODEL_PATH = "models/model.keras"
-LABELS_JSON_PATH = "labels.json"
-IMAGE_SIZE = 224
+from prediction import BengaliWordPredictor
 
 # =========================================================
 # LOAD MODEL + LABELS
 # =========================================================
 @st.cache_resource
-def load_model():
-    return tf.keras.models.load_model(MODEL_PATH)
+def get_predictor():
+    return BengaliWordPredictor()
 
-model = load_model()
-
-with open(LABELS_JSON_PATH, "r", encoding="utf-8") as f:
-    label_mapping = json.load(f)
-
-sorted_class_ids = sorted(label_mapping.keys(), key=int)
-index_to_label = {idx: label_mapping[cid] for idx, cid in enumerate(sorted_class_ids)}
-
-# =========================================================
-# PREPROCESS FUNCTION
-# =========================================================
-def preprocess_image(image: Image.Image):
-    image = image.convert("RGB")
-    image = image.resize((IMAGE_SIZE, IMAGE_SIZE))
-    image = np.array(image).astype(np.float32) / 255.0
-    image = np.expand_dims(image, axis=0)
-    return image
+predictor = get_predictor()
 
 # =========================================================
 # STREAMLIT UI
@@ -65,15 +40,8 @@ if st.button("🔍 Predict"):
     # Convert canvas to image
     img = Image.fromarray(canvas_result.image_data.astype("uint8"))
 
-    # Preprocess
-    input_tensor = preprocess_image(img)
-
     # Predict
-    predictions = model.predict(input_tensor, verbose=0)
-    predicted_index = np.argmax(predictions)
-    confidence = np.max(predictions)
-
-    predicted_label = index_to_label[predicted_index]
+    predicted_label, confidence = predictor.predict(img)
 
     # Output
     st.subheader("Prediction Result")
