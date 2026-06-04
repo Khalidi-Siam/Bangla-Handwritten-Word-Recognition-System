@@ -1,6 +1,6 @@
 # Bangla Handwritten Word Recognition System
 
-A deep learning system that recognises handwritten Bangla characters and words. It uses a **DenseNet121** backbone transfer learning on the **BanglaLekha-Isolated** dataset, a custom connected-component word segmentation pipeline, experiment tracking via **DagsHub + MLflow**, and an interactive **Streamlit** front-end containerised with **Docker**.
+A deep learning system that recognises handwritten Bangla characters and words. It uses a **DenseNet121** backbone transfer learning on the **BanglaLekha-Isolated** dataset, a custom connected-component word segmentation pipeline, experiment tracking via **MLflow**, and an interactive **Streamlit** front-end containerised with **Docker**.
 
 ---
 
