@@ -1,6 +1,4 @@
 """
-segmentation.py
----------------
 Segments a handwritten Bangla word drawn on a canvas into individual character
 images, ready to be fed one-by-one into the single-character classifier.
 
@@ -13,23 +11,12 @@ Algorithm overview
 4. Sort the resulting bounding boxes left-to-right (Bangla is LTR).
 5. Crop each bounding box from the original image, add square padding, and
    return the list of PIL Images for the predictor.
-
-Design notes
-~~~~~~~~~~~~
-- Works on *white-ink-on-black-background* canvases (as in the current app.py).
-- The merge threshold is expressed as a fraction of the canvas width so it
-  adapts to different canvas sizes automatically.
-- A minimum-size filter removes speck noise (stray dots, accidental marks).
 """
 
 import numpy as np
 from PIL import Image
 from scipy import ndimage
 
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 def segment_characters(
     canvas_image: Image.Image,
