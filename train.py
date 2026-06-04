@@ -28,7 +28,12 @@ class BengaliWordTrainer:
         self.class_id_to_index = {}
         self.index_to_label = {}
         self.model = None
-
+        self.data_augmentation = tf.keras.Sequential([
+            layers.RandomRotation(0.05),
+            layers.RandomZoom(0.1),
+            layers.RandomTranslation(0.05, 0.05),
+            layers.RandomContrast(0.1)
+        ])
         self._fix_randomness()
 
     def _fix_randomness(self):
@@ -91,36 +96,39 @@ class BengaliWordTrainer:
         autotune = tf.data.AUTOTUNE
 
         train_dataset = tf.data.Dataset.from_tensor_slices((train_paths, train_labels))
-        train_dataset = train_dataset.shuffle(1000).map(self._preprocess_image, num_parallel_calls=autotune).batch(self.batch_size).prefetch(autotune)
+        train_dataset = train_dataset.shuffle(1000).map(
+            lambda x, y: self._preprocess_image(x, y, training=True),
+            num_parallel_calls=autotune
+        ).batch(self.batch_size).prefetch(autotune)
 
         val_dataset = tf.data.Dataset.from_tensor_slices((val_paths, val_labels))
-        val_dataset = val_dataset.map(self._preprocess_image, num_parallel_calls=autotune).batch(self.batch_size).prefetch(autotune)
+        val_dataset = val_dataset.map(
+            lambda x, y: self._preprocess_image(x, y, training=False),
+            num_parallel_calls=autotune
+        ).batch(self.batch_size).prefetch(autotune)
 
         return train_dataset, val_dataset
 
-    def _preprocess_image(self, image_path, label):
+    def _preprocess_image(self, image_path, label, training=False):
         image = tf.io.read_file(image_path)
         image = tf.image.decode_image(image, channels=3, expand_animations=False)
         image = tf.image.resize(image, (self.image_size, self.image_size))
         image = tf.cast(image, tf.float32) / 255.0
+
+        if training:
+            image = self.data_augmentation(image, training=True)
+
         return image, label
 
+    
     def build_model(self):
         num_classes = len(self.index_to_label)
-
-        data_augmentation = models.Sequential([
-            layers.RandomRotation(0.05),
-            layers.RandomZoom(0.1),
-            layers.RandomTranslation(0.05, 0.05),
-            layers.RandomContrast(0.1)
-        ])
 
         base_model = DenseNet121(include_top=False, weights="imagenet", input_shape=(self.image_size, self.image_size, 3))
         base_model.trainable = False  # Freeze base
 
         inputs = layers.Input(shape=(self.image_size, self.image_size, 3))
-        x = data_augmentation(inputs)
-        x = base_model(x, training=False)
+        x = base_model(inputs, training=False)
         x = layers.GlobalAveragePooling2D()(x)
         x = layers.Dropout(0.3)(x)
         x = layers.Dense(256, activation="relu")(x)
@@ -153,6 +161,8 @@ class BengaliWordTrainer:
         return history
 
     def save_model(self):
+        # Create directory if it does not exist
+        os.makedirs(os.path.dirname(self.save_json_path), exist_ok=True)
         # Save a model-specific labels.json mapping in the same directory as the model
         with open(self.save_json_path, "w", encoding="utf-8") as f:
             json.dump({str(k): v for k, v in self.index_to_label.items()}, f, ensure_ascii=False, indent=4)
