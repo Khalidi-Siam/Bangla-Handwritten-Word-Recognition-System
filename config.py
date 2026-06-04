@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,12 +15,21 @@ class TrainConfig(BaseModel):
     batch_size: int = 32
     epochs: int = 1
     learning_rate: float = 1e-4
-    sample_per_class: Optional[int] = 100
+    sample_per_class: Optional[int] = 100 # Set to None for no limit, or an integer for max samples per class during training
     model_save_path: Path = Path("models/model.keras")
+    save_json_path: Path = Path("models/labels.json")
+
+    @field_validator('sample_per_class', mode='before')
+    @classmethod
+    def parse_sample_per_class(cls, v):
+        if isinstance(v, str) and v.lower() in ('none', 'null', ''):
+            return None
+        return v
 
 class MlflowConfig(BaseModel):
     tracking_uri: str = "http://localhost:5000"
-    experiment_name: str = "BanglaHandwrittenWordRecognition"
+    registry_uri: str = "http://localhost:5000"
+    experiment_name: str = "Bengali_Word_Recognition"
 
 
 class PredictConfig(BaseModel):

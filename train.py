@@ -3,10 +3,11 @@ import json
 import random
 import numpy as np
 import tensorflow as tf
+import mlflow
 
 from tensorflow.keras import layers, models
 from tensorflow.keras.applications import DenseNet121
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint, Callback
 from config import settings
 from sklearn.model_selection import train_test_split
 
@@ -20,6 +21,7 @@ class BengaliWordTrainer:
         self.epochs = settings.train.epochs
         self.learning_rate = settings.train.learning_rate
         self.model_save_path = settings.train.model_save_path
+        self.save_json_path = settings.train.save_json_path
         self.seed = settings.seed
         self.sample_per_class = settings.train.sample_per_class
         
@@ -68,6 +70,7 @@ class BengaliWordTrainer:
 
             all_files = [os.path.join(class_dir, f) for f in os.listdir(class_dir) if f.lower().endswith(supported_extensions)]
 
+            all_files.sort()
             # Sample subset if specified
             if self.sample_per_class is not None:
                 all_files = random.sample(all_files, min(self.sample_per_class, len(all_files)))
@@ -138,7 +141,7 @@ class BengaliWordTrainer:
         callbacks = [
             EarlyStopping(monitor="val_loss", patience=5, restore_best_weights=True),
             ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=2, verbose=1),
-            ModelCheckpoint(filepath=self.model_save_path, monitor="val_accuracy", save_best_only=True, verbose=1)
+            ModelCheckpoint(filepath=self.model_save_path, monitor="val_loss", save_best_only=True, verbose=1)
         ]
 
         history = self.model.fit(
@@ -150,34 +153,76 @@ class BengaliWordTrainer:
         return history
 
     def save_model(self):
-        self.model.save(self.model_save_path)
-        
         # Save a model-specific labels.json mapping in the same directory as the model
-        model_dir = os.path.dirname(self.model_save_path)
-        if not model_dir:
-            model_dir = "."
-        model_labels_path = os.path.join(model_dir, "labels.json")
-        with open(model_labels_path, "w", encoding="utf-8") as f:
+        with open(self.save_json_path, "w", encoding="utf-8") as f:
             json.dump({str(k): v for k, v in self.index_to_label.items()}, f, ensure_ascii=False, indent=4)
             
         print(f"\n✅ Model saved to: {self.model_save_path}")
-        print(f"✅ Prediction labels mapping saved to: {model_labels_path}")
+        print(f"✅ Prediction labels mapping saved to: {self.save_json_path}")
         print("🎉 Training completed successfully!")
         
     def run(self):
-        self.load_label_mapping()
-        train_dataset, val_dataset = self.prepare_datasets()
-        self.build_model()
-        self.train(train_dataset, val_dataset)
-        self.save_model()
+        mlflow.set_tracking_uri(settings.mlflow.tracking_uri)
+        mlflow.set_registry_uri(settings.mlflow.registry_uri)
+        mlflow.set_experiment(settings.mlflow.experiment_name)
 
-if __name__ == "__main__":
-    trainer = BengaliWordTrainer()
-    print("\n\n*** Summary of training configuration ***")
-    print(f"Model Save Path: {trainer.model_save_path}")
-    print(f"Image Size: {trainer.image_size}")
-    print(f"Batch Size: {trainer.batch_size}")
-    print(f"Learning Rate: {trainer.learning_rate}")
-    print(f"Epochs: {trainer.epochs}\n\n")
-    print("🚀 Starting training...")
-    trainer.run()
+
+        with mlflow.start_run():
+            mlflow.log_params({
+                "image_size": self.image_size,
+                "batch_size": self.batch_size,
+                "epochs": self.epochs,
+                "learning_rate": self.learning_rate,
+                "seed": self.seed,
+                "sample_per_class": self.sample_per_class
+            })
+            
+            
+            self.load_label_mapping()
+            train_dataset, val_dataset = self.prepare_datasets()
+            self.build_model()
+
+            history = self.train(train_dataset, val_dataset)
+
+            self.save_model()
+
+            # 1. Find best epoch (based on validation accuracy)
+            best_epoch = int(np.argmin(history.history["val_loss"]))
+
+            # 2. Extract BEST metrics (val + train from same epoch)
+            best_val_acc = history.history["val_accuracy"][best_epoch]
+            best_val_loss = history.history["val_loss"][best_epoch]
+
+            best_train_acc = history.history["accuracy"][best_epoch]
+            best_train_loss = history.history["loss"][best_epoch]
+
+            # 3. Log to MLflow
+            mlflow.log_metrics({
+                "best_epoch": best_epoch,
+                "best_val_accuracy": best_val_acc,
+                "best_val_loss": best_val_loss,
+                "best_train_accuracy": best_train_acc,
+                "best_train_loss": best_train_loss
+            })
+
+            # 4. Load BEST saved model (from ModelCheckpoint)
+            best_model = tf.keras.models.load_model(self.model_save_path)
+
+            # 5. Log model
+            mlflow.keras.log_model(best_model, name="model")
+            
+            # Log the labels.json as an artifact to mlflow
+            mlflow.log_artifact(self.save_json_path, artifact_path="model")
+
+# if __name__ == "__main__":
+trainer = BengaliWordTrainer()
+print("\n\n*** Summary of training configuration ***")
+print(f"Model Save Path: {trainer.model_save_path}")
+print(f"Image Size: {trainer.image_size}")
+print(f"Batch Size: {trainer.batch_size}")
+print(f"Learning Rate: {trainer.learning_rate}")
+print(f"Epochs: {trainer.epochs}")
+print(f"Tracking URI: {settings.mlflow.tracking_uri}")
+print(f"per class sample limit: {trainer.sample_per_class}\n\n")
+print("🚀 Starting training...")
+trainer.run()
