@@ -24,10 +24,11 @@ class BengaliWordPredictor:
         self.index_to_label = {int(k): v for k, v in label_mapping.items()}
         
     def preprocess_image(self, image: Image.Image):
-        image = image.convert("RGB")
+        image = image.convert("L")
         image = image.resize((self.image_size, self.image_size))
         image = np.array(image).astype(np.float32) / 255.0
         image = np.expand_dims(image, axis=0)
+        image = np.expand_dims(image, axis=-1)
         return image
         
     def predict(self, image: Image.Image):

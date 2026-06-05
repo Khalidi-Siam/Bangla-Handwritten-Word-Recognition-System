@@ -18,6 +18,7 @@ class TrainConfig(BaseModel):
     sample_per_class: Optional[int] = 100 # Set to None for no limit, or an integer for max samples per class during training
     model_save_path: Path = Path("models/model.keras")
     save_json_path: Path = Path("models/labels.json")
+    save_summary_path: Path = Path("models/train_history.csv")
 
     @field_validator('sample_per_class', mode='before')
     @classmethod

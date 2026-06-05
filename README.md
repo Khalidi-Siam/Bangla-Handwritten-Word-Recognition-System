@@ -1,6 +1,6 @@
 # Bangla Handwritten Word Recognition System
 
-A deep learning system that recognises handwritten Bangla characters and words. It uses a **DenseNet121** backbone transfer learning on the **BanglaLekha-Isolated** dataset, a custom connected-component word segmentation pipeline, experiment tracking via **MLflow**, and an interactive **Streamlit** front-end containerised with **Docker**.
+A deep learning system that recognises handwritten Bangla characters and words. It uses a **custom 4-block CNN** trained from scratch on **grayscale** images from the **BanglaLekha-Isolated** dataset, a custom connected-component word segmentation pipeline, experiment tracking via **MLflow**, and an interactive **Streamlit** front-end containerised with **Docker**.
 
 ---
 
@@ -33,7 +33,8 @@ Bangla-Handwritten-Word-Recognition-System/
 │       └── ...                    # 50 class folders in total
 ├── models/                        # Saved model artifacts (created after training)
 │   ├── model.keras
-│   └── labels.json
+│   ├── labels.json
+│   └── train_history.csv          # Per-epoch train/val metrics (created after training)
 ├── app.py                         # Streamlit front-end
 ├── config.py                      # Pydantic settings (reads from .env)
 ├── initial_setup.py               # Modal: upload dataset to cloud volume
@@ -88,8 +89,8 @@ All preprocessing is done inside `train.py` using the **`tf.data`** pipeline.
 
 | Step | Detail |
 |------|--------|
-| **Image decode** | `tf.image.decode_image` with `channels=3` (forces RGB) |
-| **Resize** | Bilinear resize to `224 × 224` pixels (configurable via `TRAIN__IMAGE_SIZE`) |
+| **Image decode** | `tf.image.decode_image` with `channels=1` (grayscale — matches the CNN's single-channel input) |
+| **Resize** | Bilinear resize to `64 × 64` pixels (configurable via `TRAIN__IMAGE_SIZE`) |
 | **Normalise** | Pixel values scaled to `[0, 1]` by dividing by `255.0` |
 | **Train-time augmentation** | Random rotation `±5°`, random zoom `±10%`, random translation `±5%`, random contrast `±10%` |
 | **Validation** | No augmentation — raw normalised images only |
@@ -106,28 +107,48 @@ An 80 / 20 stratified split is applied with `sklearn.model_selection.train_test_
 
 ## Model Architecture
 
-The classifier is a **transfer-learning** model built on top of **DenseNet121** pre-trained on ImageNet.
+The classifier is a **custom CNN trained from scratch** on grayscale character images.
 
 ```
-Input (224 × 224 × 3)
+Input (64 × 64 × 1)   ← grayscale
     │
-    ▼
-DenseNet121 (frozen, weights="imagenet")
+    ├── Block 1
+    │   ├── Conv2D(32, 3×3, ReLU, padding=same)
+    │   ├── BatchNormalization
+    │   ├── Conv2D(32, 3×3, ReLU, padding=same)
+    │   ├── BatchNormalization
+    │   ├── MaxPooling2D(2×2)          → 32 × 32
+    │   └── Dropout(0.20)
     │
-    ▼
-GlobalAveragePooling2D
+    ├── Block 2
+    │   ├── Conv2D(64, 3×3, ReLU, padding=same)
+    │   ├── BatchNormalization
+    │   ├── Conv2D(64, 3×3, ReLU, padding=same)
+    │   ├── BatchNormalization
+    │   ├── MaxPooling2D(2×2)          → 16 × 16
+    │   └── Dropout(0.25)
     │
-    ▼
-Dropout (0.3)
+    ├── Block 3
+    │   ├── Conv2D(128, 3×3, ReLU, padding=same)
+    │   ├── BatchNormalization
+    │   ├── Conv2D(128, 3×3, ReLU, padding=same)
+    │   ├── BatchNormalization
+    │   ├── MaxPooling2D(2×2)          → 8 × 8
+    │   └── Dropout(0.30)
     │
-    ▼
-Dense (256, activation="relu")
+    ├── Block 4
+    │   ├── Conv2D(256, 3×3, ReLU, padding=same)
+    │   ├── BatchNormalization
+    │   ├── MaxPooling2D(2×2)          → 4 × 4
+    │   └── Dropout(0.35)
     │
-    ▼
-Dropout (0.3)
+    ├── GlobalAveragePooling2D
     │
-    ▼
-Dense (50, activation="softmax")   ← 50 Bangla character classes
+    ├── Dense(256, activation="relu")
+    │   ├── BatchNormalization
+    │   └── Dropout(0.50)
+    │
+    └── Dense(50, activation="softmax")   ← 50 Bangla character classes
 ```
 
 ---
@@ -147,12 +168,14 @@ Training is orchestrated by the `BengaliWordTrainer` class in `train.py`.
 ### Execution order
 
 ```
-1. load_label_mapping()    → reads root labels.json, builds class_dir → index map
-2. prepare_datasets()      → scans image folders, splits into train/val tf.data pipelines
-3. build_model()           → constructs the DenseNet121-based classifier
-4. train()                 → fits the model with callbacks
-5. save_model()            → writes models/model.keras and models/labels.json
-6. log to MLflow           → params, best-epoch metrics, model artifact, labels.json
+1. load_label_mapping()     → reads root labels.json, builds class_dir → index map
+2. prepare_datasets()       → scans image folders, splits into train/val tf.data pipelines
+3. build_model()            → constructs the custom 4-block grayscale CNN
+4. train()                  → fits the model with callbacks
+5. save_model()             → writes models/model.keras and models/labels.json
+6. save_history_csv()       → writes per-epoch metrics to models/train_history.csv
+7. log to MLflow            → params, best-epoch metrics, model artifact, labels.json,
+                              and train_history.csv (under artifacts/metrics/)
 ```
 
 ---
@@ -163,12 +186,13 @@ This project supports two MLflow tracking approaches depending on your workflow 
 
 ### What gets logged (both options)
 
-| Item | Type |
-|------|------|
-| `image_size`, `batch_size`, `epochs`, `learning_rate`, `seed`, `sample_per_class` | Parameters |
-| `best_epoch`, `best_val_accuracy`, `best_val_loss`, `best_train_accuracy`, `best_train_loss` | Metrics |
-| `model.keras` | Model artifact |
-| `labels.json` | Artifact (alongside model) |
+| Item | Type | MLflow path |
+|------|------|-------------|
+| `image_size`, `batch_size`, `epochs`, `learning_rate`, `seed`, `sample_per_class` | Parameters | — |
+| `best_epoch`, `best_val_accuracy`, `best_val_loss`, `best_train_accuracy`, `best_train_loss` | Metrics | — |
+| `model.keras` | Model artifact | `artifacts/model/` |
+| `labels.json` | Artifact | `artifacts/model/` |
+| `train_history.csv` | Per-epoch CSV (epoch, train_loss, train_accuracy, val_loss, val_accuracy) | `artifacts/metrics/` |
 
 ---
 
@@ -304,13 +328,14 @@ DATA__DATASET_PATH=BanglaLekha-Isolated/Images
 DATA__LABELS_JSON_PATH=labels.json
 
 # ── Training ────────────────────────────────────────────────────────────
-TRAIN__IMAGE_SIZE=224
-TRAIN__BATCH_SIZE=32
-TRAIN__EPOCHS=30
-TRAIN__LEARNING_RATE=0.0001
-TRAIN__SAMPLE_PER_CLASS=100        # Set to None for full dataset
+TRAIN__IMAGE_SIZE=64               # 64 recommended for the custom CNN (or 128 for more detail)
+TRAIN__BATCH_SIZE=32             
+TRAIN__EPOCHS=20
+TRAIN__LEARNING_RATE=0.001
+TRAIN__SAMPLE_PER_CLASS=1000        # Set to None for full dataset
 TRAIN__MODEL_SAVE_PATH=models/model.keras
 TRAIN__SAVE_JSON_PATH=models/labels.json
+TRAIN__SAVE_SUMMARY_PATH=models/train_history.csv
 
 # ── MLflow / DagsHub ────────────────────────────────────────────────────
 MLFLOW__TRACKING_URI=https://dagshub.com/<username>/<repo>.mlflow
@@ -322,7 +347,7 @@ MLFLOW_TRACKING_PASSWORD=<your-dagshub-token>
 # ── Inference ───────────────────────────────────────────────────────────
 PREDICT__MODEL_PATH=models/model.keras
 PREDICT__LABELS_JSON_PATH=models/labels.json
-PREDICT__IMAGE_SIZE=224
+PREDICT__IMAGE_SIZE=64             # Must match TRAIN__IMAGE_SIZE
 ```
 
 > **Note:** The double underscore `__` is used as the nested delimiter for Pydantic-Settings (e.g. `TRAIN__BATCH_SIZE` maps to `settings.train.batch_size`). `MLFLOW_TRACKING_USERNAME` and `MLFLOW_TRACKING_PASSWORD` are single-level because they are read directly by the MLflow client from the environment.
@@ -486,19 +511,15 @@ Then open **http://localhost:8501** in your browser.
 | **No conjunct character support** | Bangla has hundreds of conjunct consonants (যুক্তাক্ষর / juktakkhar). This system does not recognise them; each segment is classified as a single base character. |
 | **Segmentation brittleness** | The connected-component segmenter works well for clearly separated characters but can fail when strokes overlap significantly, especially with the মাত্রা (top horizontal line) shared across characters. |
 | **Fixed class set** | Only the 50 character classes from BanglaLekha-Isolated are supported. Numerals (০–৯) and common matras (া, ি, ী, ু, ূ, etc.) are not included. |
-| **Frozen backbone** | The DenseNet121 backbone is never fine-tuned (only the top layers are trained). This limits the model's ability to adapt to handwriting-specific low-level features. |
-
+| **Trained from scratch** | The custom CNN has no pre-trained weights. It requires sufficient data and epochs to converge.
 ---
 
 ## Possible Improvements
 
 | Area | Improvement |
 |------|-------------|
-| **Model** | Unfreeze the top layers of DenseNet121 after initial training (two-phase fine-tuning) to further improve accuracy |
-| **Model** | Experiment with lighter backbones (MobileNetV3, EfficientNetV2-S) for faster inference |
+| **Dataset** | Include Bangla numerals (০–৯), যুক্তাক্ষর and common diacritics (vowel signs / matras) |
 | **Model** | Add label smoothing and mixup augmentation to reduce over-confidence |
-| **Dataset** | Include Bangla numerals (০–৯) and common diacritics (vowel signs / matras) |
 | **Segmentation** | Replace the connected-component heuristic with a learned line-segmentation model (e.g., a lightweight CNN trained to detect character boundaries) |
 | **Conjuncts** | Build a separate conjunct-character classifier or a sequence model (CTC / attention) to handle full words end-to-end |
-| **MLflow** | Log per-epoch metrics (not just best-epoch) for richer experiment analysis on DagsHub |
-| **Reproducibility** | Pin the `BanglaLekha-Isolated` dataset version and add a `DVC` config to track data alongside model artifacts |
+| **Analysis** | Use `train_history.csv` from MLflow artifacts to plot learning curves and detect overfitting/underfitting early |

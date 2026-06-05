@@ -1,4 +1,5 @@
 import os
+import csv
 import json
 import random
 import numpy as np
@@ -6,7 +7,6 @@ import tensorflow as tf
 import mlflow
 
 from tensorflow.keras import layers, models
-from tensorflow.keras.applications import DenseNet121
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint, Callback
 from config import settings
 from sklearn.model_selection import train_test_split
@@ -22,6 +22,7 @@ class BengaliWordTrainer:
         self.learning_rate = settings.train.learning_rate
         self.model_save_path = settings.train.model_save_path
         self.save_json_path = settings.train.save_json_path
+        self.save_summary_path = settings.train.save_summary_path
         self.seed = settings.seed
         self.sample_per_class = settings.train.sample_per_class
         
@@ -111,7 +112,7 @@ class BengaliWordTrainer:
 
     def _preprocess_image(self, image_path, label, training=False):
         image = tf.io.read_file(image_path)
-        image = tf.image.decode_image(image, channels=3, expand_animations=False)
+        image = tf.image.decode_image(image, channels=1, expand_animations=False)
         image = tf.image.resize(image, (self.image_size, self.image_size))
         image = tf.cast(image, tf.float32) / 255.0
 
@@ -124,15 +125,43 @@ class BengaliWordTrainer:
     def build_model(self):
         num_classes = len(self.index_to_label)
 
-        base_model = DenseNet121(include_top=False, weights="imagenet", input_shape=(self.image_size, self.image_size, 3))
-        base_model.trainable = False  # Freeze base
+        inputs = layers.Input(shape=(self.image_size, self.image_size, 1))
 
-        inputs = layers.Input(shape=(self.image_size, self.image_size, 3))
-        x = base_model(inputs, training=False)
+        # ── Block 1 ──────────────────────────────────────────────────────────
+        x = layers.Conv2D(32, (3, 3), activation="relu", padding="same")(inputs)
+        x = layers.BatchNormalization()(x)
+        x = layers.Conv2D(32, (3, 3), activation="relu", padding="same")(x)
+        x = layers.BatchNormalization()(x)
+        x = layers.MaxPooling2D(pool_size=(2, 2))(x)
+        x = layers.Dropout(0.20)(x)
+
+        # ── Block 2 ──────────────────────────────────────────────────────────
+        x = layers.Conv2D(64, (3, 3), activation="relu", padding="same")(x)
+        x = layers.BatchNormalization()(x)
+        x = layers.Conv2D(64, (3, 3), activation="relu", padding="same")(x)
+        x = layers.BatchNormalization()(x)
+        x = layers.MaxPooling2D(pool_size=(2, 2))(x)
+        x = layers.Dropout(0.25)(x)
+
+        # ── Block 3 ──────────────────────────────────────────────────────────
+        x = layers.Conv2D(128, (3, 3), activation="relu", padding="same")(x)
+        x = layers.BatchNormalization()(x)
+        x = layers.Conv2D(128, (3, 3), activation="relu", padding="same")(x)
+        x = layers.BatchNormalization()(x)
+        x = layers.MaxPooling2D(pool_size=(2, 2))(x)
+        x = layers.Dropout(0.30)(x)
+
+        # ── Block 4 ──────────────────────────────────────────────────────────
+        x = layers.Conv2D(256, (3, 3), activation="relu", padding="same")(x)
+        x = layers.BatchNormalization()(x)
+        x = layers.MaxPooling2D(pool_size=(2, 2))(x)
+        x = layers.Dropout(0.35)(x)
+
+        # ── Head ─────────────────────────────────────────────────────────────
         x = layers.GlobalAveragePooling2D()(x)
-        x = layers.Dropout(0.3)(x)
         x = layers.Dense(256, activation="relu")(x)
-        x = layers.Dropout(0.3)(x)
+        x = layers.BatchNormalization()(x)
+        x = layers.Dropout(0.50)(x)
         outputs = layers.Dense(num_classes, activation="softmax")(x)
 
         self.model = models.Model(inputs, outputs)
@@ -170,6 +199,33 @@ class BengaliWordTrainer:
         print(f"\n✅ Model saved to: {self.model_save_path}")
         print(f"✅ Prediction labels mapping saved to: {self.save_json_path}")
         print("🎉 Training completed successfully!")
+
+    def save_history_csv(self, history):
+        """Write per-epoch train/val metrics to a CSV file."""
+        os.makedirs(os.path.dirname(self.save_summary_path), exist_ok=True)
+
+        fieldnames = ["epoch", "train_loss", "train_accuracy", "val_loss", "val_accuracy"]
+        rows = zip(
+            range(1, len(history.history["loss"]) + 1),
+            history.history["loss"],
+            history.history["accuracy"],
+            history.history["val_loss"],
+            history.history["val_accuracy"],
+        )
+
+        with open(self.save_summary_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for epoch, t_loss, t_acc, v_loss, v_acc in rows:
+                writer.writerow({
+                    "epoch": epoch,
+                    "train_loss": round(float(t_loss), 6),
+                    "train_accuracy": round(float(t_acc), 6),
+                    "val_loss": round(float(v_loss), 6),
+                    "val_accuracy": round(float(v_acc), 6),
+                })
+
+        print(f"✅ Training history CSV saved to: {self.save_summary_path}")
         
     def run(self):
         mlflow.set_tracking_uri(settings.mlflow.tracking_uri)
@@ -195,6 +251,7 @@ class BengaliWordTrainer:
             history = self.train(train_dataset, val_dataset)
 
             self.save_model()
+            self.save_history_csv(history)
 
             # 1. Find best epoch (based on validation accuracy)
             best_epoch = int(np.argmin(history.history["val_loss"]))
@@ -223,6 +280,9 @@ class BengaliWordTrainer:
             
             # Log the labels.json as an artifact to mlflow
             mlflow.log_artifact(self.save_json_path, artifact_path="model")
+
+            # Log per-epoch CSV history as an artifact
+            mlflow.log_artifact(self.save_summary_path, artifact_path="metrics")
 
 # if __name__ == "__main__":
 trainer = BengaliWordTrainer()
