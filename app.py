@@ -2,7 +2,7 @@ import streamlit as st
 from PIL import Image
 from streamlit_drawable_canvas import st_canvas
 from prediction import BengaliWordPredictor
-from segmentation import segment_characters, get_segmentation_debug_image
+from segmentation import BanglaWordSegmenter
 
 # =========================================================
 # PAGE CONFIG
@@ -20,7 +20,12 @@ st.set_page_config(
 def get_predictor():
     return BengaliWordPredictor()
 
+@st.cache_resource
+def get_segmenter():
+    return BanglaWordSegmenter()
+
 predictor = get_predictor()
+segmenter = get_segmenter()
 
 # =========================================================
 # SESSION STATE – initialise once
@@ -58,23 +63,6 @@ else:
     st.info("💡 Draw a single Bangla **character**.")
     canvas_width, canvas_height, stroke_width = 300, 300, 10
 
-# =========================================================
-# SEGMENTATION TUNING (word mode only)
-# =========================================================
-if is_word_mode:
-    with st.expander("⚙️ Advanced Segmentation Settings", expanded=False):
-        merge_threshold = st.slider(
-            "Merge gap threshold (% of canvas width)",
-            min_value=1, max_value=20, value=4,
-            help=(
-                "Increase if one character is being split into multiple segments. "
-                "Decrease if two neighbouring characters are being merged."
-            ),
-        ) / 100.0
-        show_debug = st.checkbox("Show segmentation bounding boxes", value=True)
-else:
-    merge_threshold = 0.04
-    show_debug = False
 
 # =========================================================
 # CANVAS CENTERED
@@ -137,11 +125,7 @@ if predict_clicked:
     # ── Word mode ─────────────────────────────────────────
     else:
         with st.spinner("Segmenting and predicting…"):
-            debug_img = (
-                get_segmentation_debug_image(raw_img, merge_threshold_ratio=merge_threshold)
-                if show_debug else None
-            )
-            char_images = segment_characters(raw_img, merge_threshold_ratio=merge_threshold)
+            char_images = segmenter.segment(raw_img)
 
         if not char_images:
             st.warning("No characters were detected. Please draw a word on the canvas.")
@@ -162,7 +146,6 @@ if predict_clicked:
             "characters": characters,
             "word": predicted_word,
             "avg_confidence": avg_confidence,
-            "debug_img": debug_img,
         }
 
 # =========================================================
@@ -185,14 +168,6 @@ if st.session_state.results is not None:
         m_col1, m_col2 = st.columns(2)
         m_col1.metric(label="Predicted Word", value=r['word'])
         m_col2.metric(label="Average Confidence", value=f"{r['avg_confidence'] * 100:.2f}%")
-
-        if r.get("debug_img") is not None:
-            st.write("")
-            st.image(
-                r["debug_img"],
-                caption="Detected segments (coloured bounding boxes)",
-                use_container_width=True,
-            )
 
         st.write("")
         st.subheader(f"Character Breakdown ({len(r['characters'])} detected)")
