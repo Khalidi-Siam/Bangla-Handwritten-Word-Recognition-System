@@ -11,14 +11,15 @@ A deep learning system that recognises handwritten Bangla characters and words. 
 3. [Preprocessing](#preprocessing)
 4. [Model Architecture](#model-architecture)
 5. [Training Process](#training-process)
-6. [MLflow Tracking](#mlflow-tracking)
-7. [Word Segmentation Strategy](#word-segmentation-strategy)
-8. [Streamlit UI](#streamlit-ui)
-9. [Configuration (.env)](#configuration-env)
-10. [Training - Local vs Modal Cloud](#training--local-vs-modal-cloud)
-11. [Docker - Build & Run](#docker--build--run)
-12. [Limitations](#limitations)
-13. [Possible Improvements](#possible-improvements)
+6. [Experiment Results](#experiment-results)
+7. [MLflow Tracking](#mlflow-tracking)
+8. [Word Segmentation Strategy](#word-segmentation-strategy)
+9. [Streamlit UI](#streamlit-ui)
+10. [Configuration (.env)](#configuration-env)
+11. [Training - Local vs Modal Cloud](#training--local-vs-modal-cloud)
+12. [Docker - Build & Run](#docker--build--run)
+13. [Limitations](#limitations)
+14. [Possible Improvements](#possible-improvements)
 
 ---
 
@@ -180,6 +181,35 @@ Training is orchestrated by the `BengaliWordTrainer` class in `train.py`.
 
 ---
 
+## Experiment Results
+
+The table below summarises all training runs conducted so far, sorted by validation accuracy (highest to lowest).  
+
+All runs use:
+- `batch_size = 32`
+- `seed = 42`
+- Full custom 4-block CNN architecture
+- All samples from the first 50 classes of the BanglaLekha-Isolated dataset
+
+| Image Size | Epochs | Learning Rate | Best Epoch | **Best Val Accuracy** | Notes |
+|:---:|:---:|:---:|:---:|:---:|:---|
+| **64** | **20** | **0.001** | **19** | **🏆 95.53%** | **Best overall — compact input, well-tuned LR** |
+| 32 | 25 | 0.001 | 22 | 95.14% | Near-best; more epochs needed to close the gap |
+| 32 | 20 | 0.001 | 19 | 95.10% | On par with 25-epoch run; 32 px converges quickly |
+| 128 | 20 | 0.001 | 16 | 94.41% | Higher resolution; diminishing returns vs. 64 px |
+| 128 | 10 | 0.001 | 9 | 93.47% | Too few epochs for 128 px to reach full potential |
+| 128 | 20 | 0.0001 | 19 | 92.94% | LR 10× lower; underfits — converges too slowly |
+
+### Key Observations
+
+- 🏆 **`image_size=64, epochs=20, lr=0.001`** achieves the highest validation accuracy of **95.53%** and is the recommended default configuration.
+- **32 × 32 images** perform surprisingly well (95.1%) and train faster, making them a good choice when compute time is a constraint.
+- **128 × 128 images** do *not* outperform smaller sizes at equivalent epoch counts — the extra spatial detail adds noise for isolated character classification without a commensurate accuracy gain.
+- **Learning rate matters more than image resolution:** dropping `lr` from `0.001` → `0.0001` on 128 px cuts accuracy by ~1.5 pp, confirming that a higher learning rate is important for fast convergence with this architecture.
+- The **best epoch is consistently near the final epoch** across runs (epochs 16–22 out of 20–25), suggesting that EarlyStopping is *not* triggering early and training could benefit from a few additional epochs.
+
+---
+
 ## MLflow Tracking
 
 This project supports two MLflow tracking approaches depending on your workflow — a **remote DagsHub server** for persistent, shareable experiment history, or a **local MLflow server** for quick, offline experimentation.
@@ -249,7 +279,7 @@ The MLflow UI will be available at **http://localhost:5000** or **http://127.0.0
 
 ## Word Segmentation Strategy
 
-The segmentation pipeline in `segmentation.py` splits a drawn Bangla word into individual character images using **connected-component analysis**.
+The segmentation pipeline in `segmentation.py` splits a drawn Bangla word into individual character images using **connected-component analysis**. It is implemented as the `BanglaWordSegmenter` class; all parameters are set at construction time and the cached instance is reused across predictions.
 
 ### Algorithm (step by step)
 
@@ -280,15 +310,6 @@ The segmentation pipeline in `segmentation.py` splits a drawn Bangla word into i
    pixels. The result is a PIL Image ready for the predictor.
 ```
 
-### Tuning from the UI
-
-The Streamlit app exposes an **"Advanced Segmentation Settings"** panel in word mode:
-
-| Control | Effect |
-|---------|--------|
-| **Merge gap threshold** slider (1%–20%) | Increase if one character is split into multiple segments; decrease if two characters are merged together |
-| **Show segmentation bounding boxes** checkbox | Overlays coloured rectangles on the canvas to visualise what was detected |
-
 ---
 
 ## Streamlit UI
@@ -307,11 +328,10 @@ The app opens at **http://localhost:8501**.
 |---------|-------------|
 | **Single Character mode** | Draw one Bangla character on a `300 × 300` canvas; shows predicted character + confidence score |
 | **Word mode** | Draw a multi-character Bangla word on a `600 × 220` canvas; the pipeline segments it, classifies each character, and assembles the predicted word |
-| **Debug overlay** | Coloured bounding boxes drawn over detected character segments |
 | **Character breakdown grid** | Each detected character crop is shown with its predicted label and confidence (up to 5 columns per row) |
 | **Clear button** | Resets the canvas and results without a full page reload |
 
-> The predictor model is loaded once via `@st.cache_resource` and reused across all reruns, keeping inference fast.
+> The predictor model and segmenter are both loaded once via `@st.cache_resource` and reused across all reruns, keeping inference fast.
 
 ---
 
@@ -518,7 +538,7 @@ Then open **http://localhost:8501** in your browser.
 
 | Area | Improvement |
 |------|-------------|
-| **Dataset** | Include Bangla numerals (০–৯), যুক্তাক্ষর and common diacritics (vowel signs / matras) |
+| **Dataset** | Include Bangla numerals (০–৯), conjunct consonants (যুক্তাক্ষর / juktakkhar) and common diacritics (vowel signs / matras) |
 | **Model** | Add label smoothing and mixup augmentation to reduce over-confidence |
 | **Segmentation** | Replace the connected-component heuristic with a learned line-segmentation model (e.g., a lightweight CNN trained to detect character boundaries) |
 | **Conjuncts** | Build a separate conjunct-character classifier or a sequence model (CTC / attention) to handle full words end-to-end |
