@@ -36,7 +36,7 @@ class MlflowConfig(BaseModel):
 class PredictConfig(BaseModel):
     model_path: Path = Path("model.keras")
     labels_json_path: Path = Path("labels.json")
-    image_size: int = 224
+    image_size: int = 64
 
 
 class Settings(BaseSettings):
