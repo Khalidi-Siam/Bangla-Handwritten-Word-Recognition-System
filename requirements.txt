@@ -1,6 +1,6 @@
-# tensorflow==2.16.1 # comment out this line if running on modal cloud with tensorflow GPU image
+tensorflow==2.16.1 # comment out this line if running on modal cloud with tensorflow GPU image
 scikit-learn==1.9.0
 streamlit==1.58.0 # no need for training, only for inference
 streamlit-drawable-canvas==0.9.3 # no need for training, only for inference
-mlflow==3.13.0
+#mlflow==3.13.0
 pydantic-settings==2.14.1
