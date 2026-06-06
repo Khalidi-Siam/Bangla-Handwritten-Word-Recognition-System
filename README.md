@@ -329,7 +329,6 @@ The app opens at **http://localhost:8501**.
 | **Single Character mode** | Draw one Bangla character on a `300 × 300` canvas; shows predicted character + confidence score |
 | **Word mode** | Draw a multi-character Bangla word on a `600 × 220` canvas; the pipeline segments it, classifies each character, and assembles the predicted word |
 | **Character breakdown grid** | Each detected character crop is shown with its predicted label and confidence (up to 5 columns per row) |
-| **Clear button** | Resets the canvas and results without a full page reload |
 
 > The predictor model and segmenter are both loaded once via `@st.cache_resource` and reused across all reruns, keeping inference fast.
 
