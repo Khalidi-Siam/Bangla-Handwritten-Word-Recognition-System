@@ -485,6 +485,22 @@ def run_training():
 
 Docker is used to containerise the **Streamlit inference application** (not training). The image is based on `python:3.11-slim`.
 
+### Before building — prepare your `.env`
+
+> **Note:** The `--env-file` flag used when running the container **does not support comments** inside the `.env` file. Make sure to **remove all comment lines** (lines starting with `#`) from your `.env` before passing it to Docker, or Docker will fail to parse the file correctly.
+
+Also, when running the Docker container you only need the **three inference-related variables** — all training and MLflow variables are irrelevant for the app:
+
+```dotenv
+PREDICT__MODEL_PATH=models/model.keras
+PREDICT__LABELS_JSON_PATH=models/labels.json
+PREDICT__IMAGE_SIZE=64
+```
+
+All other variables (`SEED`, `DATA__*`, `TRAIN__*`, `MLFLOW__*`, etc.) are only used during training and can be omitted from your Docker `.env`.
+
+> **MLflow tip:** MLflow is **not needed** to run the Streamlit app. If you want to keep your `requirements.txt` lean for the Docker image, you can comment out the `mlflow` line in `requirements.txt` before building — this reduces image size and avoids an unnecessary dependency.
+
 ### Build the image
 
 ```bash
